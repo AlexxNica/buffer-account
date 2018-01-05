@@ -34,13 +34,13 @@ const redirectWithParams = ({
   baseRoute,
   queryParams = {},
   res,
-}) =>
-  res.redirect(`${baseRoute}?${
-    Object.keys(queryParams)
-      .filter(key => queryParams[key])
-      .map(key => `${key}=${queryParams[key]}`)
-      .join('&')
-  }`);
+}) => {
+  const filteredQueryParams = Object.keys(queryParams)
+    .filter(key => queryParams[key])
+    .map(key => `${key}=${queryParams[key]}`)
+    .join('&');
+  return res.redirect(`${baseRoute}${filteredQueryParams ? '?' : ''}${filteredQueryParams}`);
+};
 
 const redirectWithError = ({
   baseRoute,
