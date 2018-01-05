@@ -30,24 +30,34 @@ const parseErrorMessage = ({ err }) => {
   }
 };
 
-const redirectWithError = ({
+const redirectWithParams = ({
   baseRoute,
-  redirect,
-  err,
+  queryParams = {},
   res,
-}) => {
-  const queryParams = {
-    redirect,
-    errorMessage: parseErrorMessage({ err }),
-    errorCode: err.statusCode,
-  };
-  return res.redirect(`${baseRoute}?${
+}) =>
+  res.redirect(`${baseRoute}?${
     Object.keys(queryParams)
       .filter(key => queryParams[key])
       .map(key => `${key}=${queryParams[key]}`)
       .join('&')
   }`);
-};
+
+const redirectWithError = ({
+  baseRoute,
+  redirect,
+  err,
+  res,
+}) =>
+  redirectWithParams({
+    baseRoute,
+    queryParams: {
+      redirect,
+      errorMessage: parseErrorMessage({ err }),
+      errorCode: err.statusCode,
+      skipSessionCheck: true,
+    },
+    res,
+  });
 
 let cachedLoginTemplate;
 const loginTemplate = async () => {
@@ -224,7 +234,10 @@ const autoLoginWithAccessToken = async ({
       sessionClient,
       production,
     });
-    res.redirect(redirect || '/');
+    redirectWithParams({
+      baseRoute: redirect || '/',
+      res,
+    });
   } catch (err) {
     next(err);
   }
@@ -253,6 +266,18 @@ const autoLoginWithBufferSession = async ({
         clientSecret,
       });
     } catch (err) {
+      // there is an existing session without an access token
+      // just redirect with no error
+      if (err.error.code === 1006) {
+        return redirectWithParams({
+          baseRoute: '/login',
+          queryParams: {
+            redirect,
+            skipSessionCheck: true,
+          },
+          res,
+        });
+      }
       return redirectWithError({
         baseRoute: '/login',
         redirect,
@@ -285,7 +310,10 @@ const autoLoginWithBufferSession = async ({
     });
 
     // redirect the user back to the right place
-    res.redirect(redirect || '/');
+    redirectWithParams({
+      baseRoute: redirect || '/',
+      res,
+    });
   } catch (err) {
     next(err);
   }
@@ -297,13 +325,14 @@ controller.login = async (req, res, next) => {
     redirect,
     errorMessage,
     errorCode,
+    skipSessionCheck,
   } = req.query;
   const accessToken = getAnyAccessToken({ session: req.session || {} });
   const bufferSession = getCookie({
     req,
     name: `${production ? '' : 'local'}bufferapp_ci_session`,
   });
-  if (accessToken && !errorMessage) {
+  if (accessToken && !skipSessionCheck) {
     autoLoginWithAccessToken({
       accessToken,
       bufferSession,
@@ -312,7 +341,7 @@ controller.login = async (req, res, next) => {
       res,
       next,
     });
-  } else if (bufferSession && !errorMessage) {
+  } else if (bufferSession && !skipSessionCheck) {
     autoLoginWithBufferSession({
       bufferSession,
       redirect,
@@ -397,16 +426,25 @@ controller.handleLogin = async (req, res, next) => {
       sessionClient,
     });
 
-    // redirect to the right place
-    let redirectURL = '/';
     if (session.global.tfa) {
-      redirectURL = req.body.redirect ?
-        `/login/tfa?redirect=${req.body.redirect}` :
-        '/login/tfa';
+      redirectWithParams({
+        baseRoute: '/login/tfa',
+        queryParams: {
+          redirect,
+        },
+        res,
+      });
     } else if (req.body.redirect) {
-      redirectURL = req.body.redirect;
+      redirectWithParams({
+        baseRoute: redirect,
+        res,
+      });
+    } else {
+      redirectWithParams({
+        baseRoute: '/',
+        res,
+      });
     }
-    res.redirect(redirectURL);
   } catch (e) {
     next(e);
   }
@@ -420,7 +458,13 @@ controller.tfa = async (req, res) => {
     // but aren't useing it yet
   } = req.query;
   if (!ObjectPath.has(req, 'session.global.tfa')) {
-    res.redirect(`/login/${redirect ? `?redirect=${redirect}` : ''}`);
+    redirectWithParams({
+      baseRoute: '/login',
+      queryParams: {
+        redirect,
+      },
+      res,
+    });
   } else {
     const tmplt = await tfaTemplate();
     const renderedLoginTemplate = tmplt({
@@ -441,7 +485,13 @@ controller.handleTfa = async (req, res, next) => {
     !ObjectPath.has(req, 'session.global.tfa') ||
     !ObjectPath.has(req, 'session.global.userId')
   ) {
-    return res.redirect(`/login/${redirect ? `?redirect=${redirect}` : ''}`);
+    return redirectWithParams({
+      baseRoute: '/login',
+      queryParams: {
+        redirect,
+      },
+      res,
+    });
   }
   if (!code) {
     return res.send('missing required fields');
@@ -499,7 +549,10 @@ controller.handleTfa = async (req, res, next) => {
       sessionClient,
       production,
     });
-    res.redirect(redirect || '/');
+    redirectWithParams({
+      baseRoute: redirect || '/',
+      res,
+    });
   } catch (err) {
     next(err);
   }
@@ -514,10 +567,13 @@ controller.logout = async (req, res, next) => {
       res,
       production,
     });
-    const baseUrl = `${serviceUrl({ production })}/login/`;
-    res.redirect(
-      `${baseUrl}${redirect ? `?redirect=${redirect}` : ''}`,
-    );
+    redirectWithParams({
+      baseRoute: `${serviceUrl({ production })}/login/`,
+      queryParams: {
+        redirect,
+      },
+      res,
+    });
   } catch (err) {
     next(err);
   }
